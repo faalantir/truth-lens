@@ -40,8 +40,22 @@ export default function Home() {
 
       setStatus("Analyzing Ingredients...");
 
+      // FIX FOR TESSERACT V6: Manually extract words if data.words is missing
+      // We cast 'data' to 'any' to bypass the TypeScript build error
+      const textData = data as any;
+      let allWords = textData.words || [];
+
+      // If V6 structure (blocks -> paragraphs -> lines -> words)
+      if (allWords.length === 0 && textData.blocks) {
+        allWords = textData.blocks.flatMap((block: any) =>
+          block.paragraphs.flatMap((para: any) =>
+            para.lines.flatMap((line: any) => line.words)
+          )
+        );
+      }
+
       // Step B: Send text to OpenAI to find "Bad Words"
-      const fullText = data.text;
+      const fullText = textData.text;
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -53,10 +67,10 @@ export default function Home() {
       // Step C: Match "Bad Words" to Coordinates (Visual Overlay)
       const newOverlays: any[] = [];
 
-      // We loop through every word Tesseract found
-      data.words.forEach((word) => {
+      // We loop through every word found
+      allWords.forEach((word: any) => {
         // Check if this word is part of a "bad ingredient" identified by GPT
-        const isBad = bad_ingredients.some(
+        const isBad = bad_ingredients?.some(
           (bad: string) =>
             bad.toLowerCase().includes(word.text.toLowerCase()) ||
             word.text.toLowerCase().includes(bad.toLowerCase())
@@ -125,12 +139,9 @@ export default function Home() {
               key={i}
               style={{
                 position: "absolute",
-                // We have to scale coordinates because the image is responsive
-                // Note: Tesseract coords are absolute to the original image size
-                // A real production app needs complex resizing math here.
-                // For MVP, we render the image at 100% width of container to simplify.
-                left: `${(box.bbox.x0 / 640) * 100}%`, // Assuming default webcam width 640
-                top: `${(box.bbox.y0 / 480) * 100}%`, // Assuming default webcam height 480
+                // Simple scaling for MVP (Assuming standard aspect ratio)
+                left: `${(box.bbox.x0 / 640) * 100}%`,
+                top: `${(box.bbox.y0 / 480) * 100}%`,
                 width: `${((box.bbox.x1 - box.bbox.x0) / 640) * 100}%`,
                 height: `${((box.bbox.y1 - box.bbox.y0) / 480) * 100}%`,
                 backgroundColor: "rgba(220, 38, 38, 0.4)",
