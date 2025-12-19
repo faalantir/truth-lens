@@ -11,14 +11,13 @@ export default function Home() {
   const [scanning, setScanning] = useState(false);
   const [overlays, setOverlays] = useState<any[]>([]);
   const [status, setStatus] = useState("Ready to Scan");
+  const [debugInfo, setDebugInfo] = useState(""); // Silent debug for you
 
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
       setImgSrc(imageSrc);
       processImage(imageSrc);
-    } else {
-      alert("Camera failed to capture. Try refreshing.");
     }
   }, [webcamRef]);
 
@@ -26,9 +25,10 @@ export default function Home() {
     setScanning(true);
     setOverlays([]);
     setStatus("Reading Text (OCR)...");
+    setDebugInfo("");
 
     try {
-      // 1. Tesseract (Standard Resolution)
+      // 1. Tesseract (Standard Config)
       const { data } = await Tesseract.recognize(image, "eng", {
         logger: (m) => {
           if (m.status === "recognizing text") {
@@ -37,7 +37,7 @@ export default function Home() {
         },
       });
 
-      // 2. Fix for Tesseract v6
+      // 2. Fix for Tesseract v6 Structure
       const textData = data as any;
       let allWords = textData.words || [];
       if (allWords.length === 0 && textData.blocks) {
@@ -49,6 +49,7 @@ export default function Home() {
       }
 
       const fullText = textData.text;
+      setDebugInfo(`OCR Read: ${fullText.substring(0, 30)}...`); // Show first 30 chars
 
       // 3. Send to API
       setStatus("Analyzing Ingredients...");
@@ -62,15 +63,9 @@ export default function Home() {
 
       const result = await response.json();
       const { bad_ingredients } = result;
-
-      // === DEBUG ALERT IS BACK ===
-      alert(
-        `OCR READ:\n${fullText.substring(
-          0,
-          50
-        )}...\n\nAI FOUND:\n${JSON.stringify(bad_ingredients)}`
+      setDebugInfo(
+        (prev) => `${prev} | AI Found: ${bad_ingredients?.length || 0}`
       );
-      // ===========================
 
       // 4. Match Words (Fuzzy Logic)
       const newOverlays: any[] = [];
@@ -101,8 +96,8 @@ export default function Home() {
       );
     } catch (err: any) {
       console.error(err);
-      alert("Error: " + err.message);
-      setStatus("Error. See Alert.");
+      setStatus("Error. Check Debug.");
+      setDebugInfo(`Error: ${err.message}`);
     } finally {
       setScanning(false);
     }
@@ -112,6 +107,7 @@ export default function Home() {
     setImgSrc(null);
     setOverlays([]);
     setStatus("Ready to Scan");
+    setDebugInfo("");
   };
 
   return (
@@ -120,14 +116,19 @@ export default function Home() {
         TRUTH LENS
       </h1>
 
+      {/* CAMERA CONTAINER */}
       <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800 shadow-2xl">
         {!imgSrc && (
           <Webcam
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            // REMOVED HD CONSTRAINTS to prevent crash
-            videoConstraints={{ facingMode: "environment" }}
+            // FORCE HD RESOLUTION (The "Viral" Setting)
+            videoConstraints={{
+              facingMode: "environment",
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            }}
             className="w-full h-full object-cover"
           />
         )}
@@ -140,18 +141,18 @@ export default function Home() {
           />
         )}
 
-        {/* Overlays */}
+        {/* RED BOX OVERLAYS */}
         {imgSrc &&
           overlays.map((box, i) => (
             <div
               key={i}
               style={{
                 position: "absolute",
-                // Default Fallback Math
-                left: `${(box.bbox.x0 / 400) * 100}%`,
-                top: `${(box.bbox.y0 / 400) * 100}%`,
-                width: `${((box.bbox.x1 - box.bbox.x0) / 400) * 100}%`,
-                height: `${((box.bbox.y1 - box.bbox.y0) / 400) * 100}%`,
+                // HD Scaling Math (Assuming 1920x1080 source)
+                left: `${(box.bbox.x0 / 1920) * 100}%`,
+                top: `${(box.bbox.y0 / 1080) * 100}%`,
+                width: `${((box.bbox.x1 - box.bbox.x0) / 1920) * 100}%`,
+                height: `${((box.bbox.y1 - box.bbox.y0) / 1080) * 100}%`,
                 backgroundColor: "rgba(220, 38, 38, 0.4)",
                 border: "2px solid red",
                 boxShadow: "0 0 10px red",
@@ -170,7 +171,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* WARNING LIST (Always visible if found) */}
+      {/* WARNING LIST (The "Safety Net" for the Demo) */}
       {overlays.length > 0 && (
         <div className="w-full max-w-md mt-4 bg-red-900/20 border border-red-500 rounded-lg p-4 animate-bounce">
           <h3 className="text-red-400 font-bold mb-2 flex items-center gap-2 uppercase tracking-widest text-sm">
@@ -189,27 +190,29 @@ export default function Home() {
         </div>
       )}
 
+      {/* CONTROLS */}
       <div className="mt-8 flex gap-6">
         {!imgSrc ? (
           <button
             onClick={capture}
-            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center"
+            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center active:scale-95 transition-transform"
           >
             <Camera className="w-8 h-8 text-black" />
           </button>
         ) : (
           <button
             onClick={reset}
-            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2"
+            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2 hover:bg-gray-700 transition-colors"
           >
             <RefreshCw className="w-5 h-5" /> Retake
           </button>
         )}
       </div>
 
-      <p className="mt-4 text-xs text-gray-500 font-mono text-center max-w-xs">
-        {status}
-      </p>
+      {/* SILENT DEBUG INFO (Visible to you, doesn't ruin video) */}
+      <div className="mt-4 text-[10px] text-gray-600 font-mono text-center max-w-xs break-all">
+        {debugInfo}
+      </div>
     </div>
   );
 }
