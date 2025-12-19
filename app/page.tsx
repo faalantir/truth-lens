@@ -1,4 +1,3 @@
-// app/page.tsx
 "use client";
 
 import React, { useState, useRef, useCallback } from "react";
@@ -13,23 +12,23 @@ export default function Home() {
   const [overlays, setOverlays] = useState<any[]>([]);
   const [status, setStatus] = useState("Ready to Scan");
 
-  // 1. Capture Image
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
       setImgSrc(imageSrc);
       processImage(imageSrc);
+    } else {
+      alert("Camera failed to capture. Try refreshing.");
     }
   }, [webcamRef]);
 
-  // 2. The Core Logic (OCR + AI)
   const processImage = async (image: string) => {
     setScanning(true);
-    setOverlays([]); // Clear previous
+    setOverlays([]);
     setStatus("Reading Text (OCR)...");
 
     try {
-      // Step A: Tesseract finds text AND coordinates
+      // 1. Tesseract (Standard Resolution)
       const { data } = await Tesseract.recognize(image, "eng", {
         logger: (m) => {
           if (m.status === "recognizing text") {
@@ -38,14 +37,9 @@ export default function Home() {
         },
       });
 
-      setStatus("Analyzing Ingredients...");
-
-      // FIX FOR TESSERACT V6: Manually extract words if data.words is missing
-      // We cast 'data' to 'any' to bypass the TypeScript build error
+      // 2. Fix for Tesseract v6
       const textData = data as any;
       let allWords = textData.words || [];
-
-      // If V6 structure (blocks -> paragraphs -> lines -> words)
       if (allWords.length === 0 && textData.blocks) {
         allWords = textData.blocks.flatMap((block: any) =>
           block.paragraphs.flatMap((para: any) =>
@@ -54,33 +48,47 @@ export default function Home() {
         );
       }
 
-      // Step B: Send text to OpenAI to find "Bad Words"
       const fullText = textData.text;
+
+      // 3. Send to API
+      setStatus("Analyzing Ingredients...");
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: fullText }),
       });
 
-      const { bad_ingredients } = await response.json();
+      if (!response.ok) throw new Error("API Failed");
 
-      // Step C: Match "Bad Words" to Coordinates (Visual Overlay)
+      const result = await response.json();
+      const { bad_ingredients } = result;
+
+      // === DEBUG ALERT IS BACK ===
+      alert(
+        `OCR READ:\n${fullText.substring(
+          0,
+          50
+        )}...\n\nAI FOUND:\n${JSON.stringify(bad_ingredients)}`
+      );
+      // ===========================
+
+      // 4. Match Words (Fuzzy Logic)
       const newOverlays: any[] = [];
-
-      // We loop through every word found
       allWords.forEach((word: any) => {
-        // Check if this word is part of a "bad ingredient" identified by GPT
-        const isBad = bad_ingredients?.some(
-          (bad: string) =>
-            bad.toLowerCase().includes(word.text.toLowerCase()) ||
-            word.text.toLowerCase().includes(bad.toLowerCase())
-        );
+        const isBad = bad_ingredients?.some((bad: string) => {
+          const cleanBad = bad.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const cleanWord = word.text.toLowerCase().replace(/[^a-z0-9]/g, "");
+          return (
+            cleanWord.length > 2 &&
+            (cleanBad.includes(cleanWord) || cleanWord.includes(cleanBad))
+          );
+        });
 
         if (isBad && word.confidence > 60) {
           newOverlays.push({
             text: word.text,
-            bbox: word.bbox, // {x0, y0, x1, y1}
-            color: "rgba(255, 0, 0, 0.5)", // Red Overlay
+            bbox: word.bbox,
+            color: "rgba(255, 0, 0, 0.5)",
           });
         }
       });
@@ -88,12 +96,13 @@ export default function Home() {
       setOverlays(newOverlays);
       setStatus(
         newOverlays.length > 0
-          ? `Found ${newOverlays.length} hidden items!`
+          ? `Found ${newOverlays.length} items!`
           : "Clean Label!"
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setStatus("Error processing image.");
+      alert("Error: " + err.message);
+      setStatus("Error. See Alert.");
     } finally {
       setScanning(false);
     }
@@ -111,25 +120,18 @@ export default function Home() {
         TRUTH LENS
       </h1>
 
-      {/* --- CAMERA CONTAINER START --- */}
       <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800 shadow-2xl">
-        {/* Camera View */}
         {!imgSrc && (
           <Webcam
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            // FORCE HD RESOLUTION for better text reading
-            videoConstraints={{
-              facingMode: "environment",
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-            }}
+            // REMOVED HD CONSTRAINTS to prevent crash
+            videoConstraints={{ facingMode: "environment" }}
             className="w-full h-full object-cover"
           />
         )}
 
-        {/* Captured Image View */}
         {imgSrc && (
           <img
             src={imgSrc}
@@ -138,21 +140,18 @@ export default function Home() {
           />
         )}
 
-        {/* THE VISUAL OVERLAYS (Red Boxes) */}
+        {/* Overlays */}
         {imgSrc &&
           overlays.map((box, i) => (
             <div
               key={i}
               style={{
                 position: "absolute",
-                // FIXED MATH: We assume the image is HD (1920x1080)
-                // If your phone takes 1080x1920 (portrait), this might be slightly off,
-                // but the "Warning List" below will save the demo.
-                left: `${(box.bbox.x0 / 1920) * 100}%`,
-                top: `${(box.bbox.y0 / 1080) * 100}%`,
-                width: `${((box.bbox.x1 - box.bbox.x0) / 1920) * 100}%`,
-                height: `${((box.bbox.y1 - box.bbox.y0) / 1080) * 100}%`,
-
+                // Default Fallback Math
+                left: `${(box.bbox.x0 / 400) * 100}%`,
+                top: `${(box.bbox.y0 / 400) * 100}%`,
+                width: `${((box.bbox.x1 - box.bbox.x0) / 400) * 100}%`,
+                height: `${((box.bbox.y1 - box.bbox.y0) / 400) * 100}%`,
                 backgroundColor: "rgba(220, 38, 38, 0.4)",
                 border: "2px solid red",
                 boxShadow: "0 0 10px red",
@@ -161,7 +160,6 @@ export default function Home() {
             />
           ))}
 
-        {/* Scanning Animation */}
         {scanning && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="text-center">
@@ -171,10 +169,8 @@ export default function Home() {
           </div>
         )}
       </div>
-      {/* --- CAMERA CONTAINER END --- */}
 
-      {/* --- NEW: FOUND ITEMS LIST (Paste this right here) --- */}
-      {/* This ensures that even if the red box is misaligned, the user SEES the result */}
+      {/* WARNING LIST (Always visible if found) */}
       {overlays.length > 0 && (
         <div className="w-full max-w-md mt-4 bg-red-900/20 border border-red-500 rounded-lg p-4 animate-bounce">
           <h3 className="text-red-400 font-bold mb-2 flex items-center gap-2 uppercase tracking-widest text-sm">
@@ -193,19 +189,18 @@ export default function Home() {
         </div>
       )}
 
-      {/* Controls */}
       <div className="mt-8 flex gap-6">
         {!imgSrc ? (
           <button
             onClick={capture}
-            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 active:scale-95 transition-transform flex items-center justify-center"
+            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center"
           >
             <Camera className="w-8 h-8 text-black" />
           </button>
         ) : (
           <button
             onClick={reset}
-            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2 hover:bg-gray-700 transition-colors"
+            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2"
           >
             <RefreshCw className="w-5 h-5" /> Retake
           </button>
@@ -213,9 +208,7 @@ export default function Home() {
       </div>
 
       <p className="mt-4 text-xs text-gray-500 font-mono text-center max-w-xs">
-        {status === "Ready to Scan"
-          ? "Point at ingredients list and tap Capture"
-          : status}
+        {status}
       </p>
     </div>
   );
