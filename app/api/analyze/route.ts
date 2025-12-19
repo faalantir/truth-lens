@@ -16,14 +16,16 @@ export async function POST(req: Request) {
       messages: [
         {
           role: "system",
-          content: `You are a food safety expert. Analyze the provided text (which is a food label). 
-          Identify ingredients that are:
-          1. Hidden sugars (e.g., dextrose, high fructose corn syrup, maltodextrin).
-          2. Artificial preservatives or additives that are controversial (e.g., Red 40, Nitrates).
-          
-          Return ONLY a JSON object with a single key 'bad_ingredients' containing an array of the exact words found in the text.
-          Example: { "bad_ingredients": ["Dextrose", "Red 40"] }
-          Do not include markdown formatting.`
+          // Inside route.ts (Update the content string)
+          content: `You are a food safety expert. Analyze the messy OCR text from a food label.
+                    Identify ingredients that are:
+                    1. Sugars (sugar, syrup, dextrose, fructose, glucose, sucrose, cane).
+                    2. Additives (Red 40, Blue 1, Yellow 5, Nitrates, Benzoate).
+                    
+                    CRITICAL: The text might have typos (e.g., "Suga r", "Hgh Fructose"). 
+                    If you see something that LOOKS like a bad ingredient, flag it.
+                    
+                    Return ONLY a JSON object with 'bad_ingredients'.`
         },
         { role: "user", content: text }
       ],

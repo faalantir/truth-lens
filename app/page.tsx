@@ -3,7 +3,7 @@
 import React, { useState, useRef, useCallback } from "react";
 import Webcam from "react-webcam";
 import Tesseract from "tesseract.js";
-import { Camera, RefreshCw, ScanEye } from "lucide-react";
+import { Camera, RefreshCw, ScanEye, AlertTriangle } from "lucide-react";
 
 export default function Home() {
   const webcamRef = useRef<Webcam>(null);
@@ -11,36 +11,23 @@ export default function Home() {
   const [scanning, setScanning] = useState(false);
   const [overlays, setOverlays] = useState<any[]>([]);
   const [status, setStatus] = useState("Ready to Scan");
-
-  // THE ON-SCREEN LOGGER STATE
-  const [logs, setLogs] = useState<string[]>([]);
-
-  const addLog = (msg: string) => {
-    setLogs((prev) => [
-      ...prev,
-      `${new Date().toLocaleTimeString().split(" ")[0]}: ${msg}`,
-    ]);
-  };
+  const [badIngredientsFound, setBadIngredientsFound] = useState<string[]>([]);
 
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
       setImgSrc(imageSrc);
-      setLogs(["Image Captured."]); // Reset logs on new capture
       processImage(imageSrc);
-    } else {
-      addLog("Error: Camera capture failed.");
     }
   }, [webcamRef]);
 
   const processImage = async (image: string) => {
     setScanning(true);
     setOverlays([]);
+    setBadIngredientsFound([]);
     setStatus("Reading Text...");
 
     try {
-      addLog("Starting Tesseract...");
-
       // 1. Tesseract
       const { data } = await Tesseract.recognize(image, "eng", {
         logger: (m) => {
@@ -53,7 +40,7 @@ export default function Home() {
         },
       });
 
-      // 2. Extract Words
+      // 2. Extract Words (V6 Safe)
       const textData = data as any;
       let allWords = textData.words || [];
       if (allWords.length === 0 && textData.blocks) {
@@ -64,43 +51,31 @@ export default function Home() {
         );
       }
 
-      const fullText = textData.text.replace(/\n/g, " ");
-      addLog(`OCR Read: "${fullText.substring(0, 30)}..."`); // Show us what it read!
-
-      if (fullText.length < 5) {
-        addLog("Error: Text too short/empty.");
-        setScanning(false);
-        return;
-      }
+      const fullText = textData.text;
 
       // 3. API Call
       setStatus("Analyzing...");
-      addLog("Sending to OpenAI...");
-
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: fullText }),
       });
 
-      if (!response.ok) throw new Error(`API Error ${response.status}`);
-
       const result = await response.json();
       const { bad_ingredients } = result;
 
-      addLog(`AI Found: [${bad_ingredients?.join(", ")}]`);
-
-      // 4. Matching Logic (The "Nuclear" Loose Match)
-      const newOverlays: any[] = [];
-
+      // 4. Update State for "Red Alert" UI
       if (bad_ingredients && bad_ingredients.length > 0) {
-        allWords.forEach((word: any) => {
-          const w = word.text.toLowerCase().replace(/[^a-z]/g, ""); // strip punctuation
+        setBadIngredientsFound(bad_ingredients);
+      }
 
+      // 5. Draw Boxes (Best Effort)
+      const newOverlays: any[] = [];
+      if (bad_ingredients?.length > 0) {
+        allWords.forEach((word: any) => {
+          const w = word.text.toLowerCase().replace(/[^a-z]/g, "");
           const isMatch = bad_ingredients.some((bad: string) => {
             const b = bad.toLowerCase().replace(/[^a-z]/g, "");
-            // Match if word is inside bad ingredient OR bad ingredient is inside word
-            // e.g. "syrup" matches "corn syrup"
             return w.length > 2 && (b.includes(w) || w.includes(b));
           });
 
@@ -112,13 +87,13 @@ export default function Home() {
           }
         });
       }
-
-      addLog(`Matches/Boxes: ${newOverlays.length}`);
       setOverlays(newOverlays);
-      setStatus(newOverlays.length > 0 ? "⚠️ Found Items!" : "Clean Label");
+      setStatus(
+        bad_ingredients?.length > 0 ? "⚠️ WARNING DETECTED" : "Clean Label"
+      );
     } catch (err: any) {
-      addLog(`CRASH: ${err.message}`);
       console.error(err);
+      setStatus("Error. Try Again.");
     } finally {
       setScanning(false);
     }
@@ -127,124 +102,130 @@ export default function Home() {
   const reset = () => {
     setImgSrc(null);
     setOverlays([]);
+    setBadIngredientsFound([]);
     setStatus("Ready to Scan");
   };
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
-      <h1 className="text-2xl font-bold mb-2 text-yellow-400 tracking-wider">
-        TRUTH LENS v2.0
-      </h1>
-      {/* FORCE VISIBLE DEBUGGER AT TOP */}
-      <div className="w-full bg-yellow-900/80 border border-yellow-400 p-2 mb-4 text-[10px] font-mono text-yellow-200 h-24 overflow-y-auto">
-        <strong>LIVE LOGS (v2):</strong>
-        {logs.length === 0 ? (
-          <div>Waiting for scan...</div>
-        ) : (
-          logs.map((log, i) => <div key={i}>{log}</div>)
-        )}
+    <div
+      className={`min-h-screen flex flex-col items-center justify-center p-4 transition-colors duration-500 ${
+        badIngredientsFound.length > 0 ? "bg-red-950" : "bg-black"
+      } text-white`}
+    >
+      <div className="flex items-center gap-2 mb-6">
+        <ScanEye
+          className={`w-8 h-8 ${
+            badIngredientsFound.length > 0 ? "text-red-500" : "text-cyan-400"
+          }`}
+        />
+        <h1 className="text-2xl font-bold tracking-widest">TRUTH LENS</h1>
       </div>
 
-      {/* CAMERA VIEW */}
-      <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
+      {/* CAMERA CONTAINER */}
+      <div
+        className={`relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-xl overflow-hidden shadow-2xl transition-all duration-500 ${
+          badIngredientsFound.length > 0
+            ? "border-4 border-red-500 shadow-[0_0_50px_rgba(220,38,38,0.5)]"
+            : "border border-gray-800"
+        }`}
+      >
         {!imgSrc && (
           <Webcam
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            videoConstraints={{ facingMode: "environment" }} // Safe Mode Camera
+            videoConstraints={{ facingMode: "environment" }}
             className="w-full h-full object-cover"
           />
         )}
+
         {imgSrc && (
           <img
             src={imgSrc}
             alt="Captured"
-            className="w-full h-full object-cover opacity-80"
+            className="w-full h-full object-cover opacity-60"
           />
         )}
 
-        {/* RED BOXES */}
+        {/* RED BOXES (Visuals) */}
         {imgSrc &&
           overlays.map((box, i) => (
             <div
               key={i}
               style={{
                 position: "absolute",
-                // Use simplified relative math for safety
+                // Simplified "Safe" Math
                 left: `${
-                  (box.bbox.x0 / (imgSrc.includes("width") ? 1 : 400)) * 100
+                  (box.bbox.x0 / (imgSrc.includes("width") ? 1 : 350)) * 100
                 }%`,
                 top: `${
-                  (box.bbox.y0 / (imgSrc.includes("height") ? 1 : 400)) * 100
+                  (box.bbox.y0 / (imgSrc.includes("height") ? 1 : 350)) * 100
                 }%`,
-                // Just try to center it roughly if math fails:
+                minWidth: "15%",
+                minHeight: "5%",
+                backgroundColor: "rgba(255, 0, 0, 0.3)",
                 border: "2px solid red",
-                width: "15%",
-                height: "5%", // Force a visible box size if coordinates fail
-                backgroundColor: "rgba(255, 0, 0, 0.4)",
+                boxShadow: "0 0 15px red",
                 zIndex: 20,
               }}
             />
           ))}
 
+        {/* SCANNING OVERLAY */}
         {scanning && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
-            <ScanEye className="w-12 h-12 text-red-500 animate-pulse" />
+          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-50">
+            <ScanEye className="w-16 h-16 text-cyan-400 animate-pulse mb-4" />
+            <p className="font-mono text-cyan-400 tracking-widest">{status}</p>
           </div>
         )}
       </div>
 
-      {/* WARNING LIST (Always Visible Backup) */}
-      {overlays.length > 0 && (
-        <div className="w-full max-w-md mt-2 bg-red-900/40 border border-red-500 p-3 rounded animate-bounce">
-          <p className="text-red-300 text-xs font-bold uppercase">
-            ⚠️ Warning Detected:
-          </p>
-          <div className="flex flex-wrap gap-2 mt-1">
-            {overlays.map((o, i) => (
-              <span
-                key={i}
-                className="bg-red-600 text-white text-xs px-2 py-1 rounded"
-              >
-                {o.text}
-              </span>
-            ))}
+      {/* RESULT CARD (The "Viral" Payoff) */}
+      {badIngredientsFound.length > 0 && (
+        <div className="w-full max-w-md mt-6 bg-red-900/90 border-l-4 border-red-500 p-4 rounded-r-lg shadow-xl animate-in slide-in-from-bottom-10 fade-in duration-500">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-6 h-6 text-red-400 shrink-0" />
+            <div>
+              <h3 className="text-red-100 font-bold uppercase tracking-wider mb-1">
+                Hidden Ingredients Found
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {badIngredientsFound.map((item, i) => (
+                  <span
+                    key={i}
+                    className="px-2 py-1 bg-red-950 border border-red-500/50 text-red-200 text-xs font-mono rounded"
+                  >
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* CONTROLS */}
-      <div className="mt-6 flex gap-6">
+      <div className="mt-8 flex gap-6">
         {!imgSrc ? (
           <button
             onClick={capture}
-            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center"
+            className="w-20 h-20 bg-white rounded-full border-[6px] border-gray-300 flex items-center justify-center active:scale-90 transition-transform shadow-lg"
           >
             <Camera className="w-8 h-8 text-black" />
           </button>
         ) : (
           <button
             onClick={reset}
-            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2"
+            className="px-8 py-4 bg-gray-800 rounded-full flex items-center gap-2 hover:bg-gray-700 transition-colors font-bold tracking-wide"
           >
-            <RefreshCw className="w-5 h-5" /> Retake
+            <RefreshCw className="w-5 h-5" /> SCAN AGAIN
           </button>
         )}
       </div>
 
-      {/* === THE DEBUG DASHBOARD (Black Box) === */}
-      <div className="w-full max-w-md mt-6 p-2 bg-gray-900 border border-gray-700 text-[10px] font-mono text-green-400 h-32 overflow-y-auto">
-        <p className="border-b border-gray-700 mb-1 text-gray-500">
-          SYSTEM LOGS:
-        </p>
-        {logs.map((log, i) => (
-          <div key={i}>{log}</div>
-        ))}
-        {logs.length === 0 && (
-          <span className="text-gray-600">Waiting for logs...</span>
-        )}
-      </div>
+      <p className="mt-8 text-[10px] text-gray-600 font-mono">
+        MVP v1.0 • Built with Next.js + GPT-4o
+      </p>
     </div>
   );
 }
