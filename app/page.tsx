@@ -123,7 +123,11 @@ export default function Home() {
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            videoConstraints={{ facingMode: "environment" }}
+            videoConstraints={{
+              facingMode: "environment",
+              width: { ideal: 1920 }, // Force High Definition
+              height: { ideal: 1080 },
+            }}
             className="w-full h-full object-cover"
           />
         )}
