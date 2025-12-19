@@ -3,7 +3,13 @@
 import React, { useState, useRef, useCallback } from "react";
 import Webcam from "react-webcam";
 import Tesseract from "tesseract.js";
-import { Camera, RefreshCw, ScanEye, AlertTriangle } from "lucide-react";
+import {
+  Camera,
+  RefreshCw,
+  ScanEye,
+  AlertTriangle,
+  CheckCircle,
+} from "lucide-react";
 
 export default function Home() {
   const webcamRef = useRef<Webcam>(null);
@@ -11,7 +17,10 @@ export default function Home() {
   const [scanning, setScanning] = useState(false);
   const [overlays, setOverlays] = useState<any[]>([]);
   const [status, setStatus] = useState("Ready to Scan");
-  const [badIngredientsFound, setBadIngredientsFound] = useState<string[]>([]);
+  const [resultState, setResultState] = useState<"idle" | "danger" | "safe">(
+    "idle"
+  );
+  const [foundItems, setFoundItems] = useState<string[]>([]);
 
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
@@ -24,7 +33,8 @@ export default function Home() {
   const processImage = async (image: string) => {
     setScanning(true);
     setOverlays([]);
-    setBadIngredientsFound([]);
+    setFoundItems([]);
+    setResultState("idle");
     setStatus("Reading Text...");
 
     try {
@@ -40,7 +50,7 @@ export default function Home() {
         },
       });
 
-      // 2. Extract Words (V6 Safe)
+      // 2. Extract Words
       const textData = data as any;
       let allWords = textData.words || [];
       if (allWords.length === 0 && textData.blocks) {
@@ -53,6 +63,13 @@ export default function Home() {
 
       const fullText = textData.text;
 
+      // SAFETY CHECK: Did we actually read anything?
+      if (fullText.length < 10) {
+        setStatus("Text too blurry. Try again.");
+        setScanning(false);
+        return;
+      }
+
       // 3. API Call
       setStatus("Analyzing...");
       const response = await fetch("/api/analyze", {
@@ -64,12 +81,17 @@ export default function Home() {
       const result = await response.json();
       const { bad_ingredients } = result;
 
-      // 4. Update State for "Red Alert" UI
+      // 4. Determine State (Red vs Green)
       if (bad_ingredients && bad_ingredients.length > 0) {
-        setBadIngredientsFound(bad_ingredients);
+        setResultState("danger");
+        setFoundItems(bad_ingredients);
+        setStatus("⚠️ HIDDEN INGREDIENTS");
+      } else {
+        setResultState("safe");
+        setStatus("✅ CLEAN LABEL");
       }
 
-      // 5. Draw Boxes (Best Effort)
+      // 5. Draw Boxes (Only for bad items)
       const newOverlays: any[] = [];
       if (bad_ingredients?.length > 0) {
         allWords.forEach((word: any) => {
@@ -78,19 +100,10 @@ export default function Home() {
             const b = bad.toLowerCase().replace(/[^a-z]/g, "");
             return w.length > 2 && (b.includes(w) || w.includes(b));
           });
-
-          if (isMatch) {
-            newOverlays.push({
-              text: word.text,
-              bbox: word.bbox,
-            });
-          }
+          if (isMatch) newOverlays.push({ text: word.text, bbox: word.bbox });
         });
       }
       setOverlays(newOverlays);
-      setStatus(
-        bad_ingredients?.length > 0 ? "⚠️ WARNING DETECTED" : "Clean Label"
-      );
     } catch (err: any) {
       console.error(err);
       setStatus("Error. Try Again.");
@@ -102,31 +115,43 @@ export default function Home() {
   const reset = () => {
     setImgSrc(null);
     setOverlays([]);
-    setBadIngredientsFound([]);
+    setFoundItems([]);
+    setResultState("idle");
     setStatus("Ready to Scan");
+  };
+
+  // Dynamic Styles based on result
+  const getThemeColor = () => {
+    if (resultState === "danger")
+      return "bg-red-950 border-red-500 text-red-100";
+    if (resultState === "safe")
+      return "bg-green-950 border-green-500 text-green-100";
+    return "bg-black border-gray-800 text-white";
   };
 
   return (
     <div
       className={`min-h-screen flex flex-col items-center justify-center p-4 transition-colors duration-500 ${
-        badIngredientsFound.length > 0 ? "bg-red-950" : "bg-black"
+        resultState === "danger"
+          ? "bg-red-950"
+          : resultState === "safe"
+          ? "bg-green-900"
+          : "bg-black"
       } text-white`}
     >
       <div className="flex items-center gap-2 mb-6">
-        <ScanEye
-          className={`w-8 h-8 ${
-            badIngredientsFound.length > 0 ? "text-red-500" : "text-cyan-400"
-          }`}
-        />
+        <ScanEye className="w-8 h-8 opacity-80" />
         <h1 className="text-2xl font-bold tracking-widest">TRUTH LENS</h1>
       </div>
 
       {/* CAMERA CONTAINER */}
       <div
-        className={`relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-xl overflow-hidden shadow-2xl transition-all duration-500 ${
-          badIngredientsFound.length > 0
-            ? "border-4 border-red-500 shadow-[0_0_50px_rgba(220,38,38,0.5)]"
-            : "border border-gray-800"
+        className={`relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-xl overflow-hidden shadow-2xl transition-all duration-500 border-4 ${
+          resultState === "danger"
+            ? "border-red-500 shadow-red-500/50"
+            : resultState === "safe"
+            ? "border-green-500 shadow-green-500/50"
+            : "border-gray-800"
         }`}
       >
         {!imgSrc && (
@@ -147,14 +172,13 @@ export default function Home() {
           />
         )}
 
-        {/* RED BOXES (Visuals) */}
+        {/* RED BOXES */}
         {imgSrc &&
           overlays.map((box, i) => (
             <div
               key={i}
               style={{
                 position: "absolute",
-                // Simplified "Safe" Math
                 left: `${
                   (box.bbox.x0 / (imgSrc.includes("width") ? 1 : 350)) * 100
                 }%`,
@@ -171,7 +195,6 @@ export default function Home() {
             />
           ))}
 
-        {/* SCANNING OVERLAY */}
         {scanning && (
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-50">
             <ScanEye className="w-16 h-16 text-cyan-400 animate-pulse mb-4" />
@@ -180,17 +203,17 @@ export default function Home() {
         )}
       </div>
 
-      {/* RESULT CARD (The "Viral" Payoff) */}
-      {badIngredientsFound.length > 0 && (
+      {/* RESULT CARD - DANGER */}
+      {resultState === "danger" && (
         <div className="w-full max-w-md mt-6 bg-red-900/90 border-l-4 border-red-500 p-4 rounded-r-lg shadow-xl animate-in slide-in-from-bottom-10 fade-in duration-500">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-6 h-6 text-red-400 shrink-0" />
             <div>
               <h3 className="text-red-100 font-bold uppercase tracking-wider mb-1">
-                Hidden Ingredients Found
+                Deceptive Ingredients
               </h3>
               <div className="flex flex-wrap gap-2">
-                {badIngredientsFound.map((item, i) => (
+                {foundItems.map((item, i) => (
                   <span
                     key={i}
                     className="px-2 py-1 bg-red-950 border border-red-500/50 text-red-200 text-xs font-mono rounded"
@@ -199,6 +222,23 @@ export default function Home() {
                   </span>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESULT CARD - SAFE */}
+      {resultState === "safe" && (
+        <div className="w-full max-w-md mt-6 bg-green-900/90 border-l-4 border-green-500 p-4 rounded-r-lg shadow-xl animate-in slide-in-from-bottom-10 fade-in duration-500">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="w-8 h-8 text-green-400 shrink-0" />
+            <div>
+              <h3 className="text-green-100 font-bold uppercase tracking-wider">
+                Clean Label Verified
+              </h3>
+              <p className="text-green-300 text-xs">
+                No hidden sugars or additives detected.
+              </p>
             </div>
           </div>
         </div>
@@ -223,8 +263,8 @@ export default function Home() {
         )}
       </div>
 
-      <p className="mt-8 text-[10px] text-gray-600 font-mono">
-        MVP v1.0 • Built with Next.js + GPT-4o
+      <p className="mt-8 text-[10px] text-gray-500 font-mono">
+        Truth Lens v2.1 • Smart Analysis
       </p>
     </div>
   );
