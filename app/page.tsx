@@ -21,14 +21,14 @@ export default function Home() {
     }
   }, [webcamRef]);
 
+  // REPLACE THE processImage FUNCTION WITH THIS DIAGNOSTIC VERSION
   const processImage = async (image: string) => {
     setScanning(true);
     setOverlays([]);
     setStatus("Reading Text (OCR)...");
-    setDebugInfo("");
 
     try {
-      // 1. Tesseract (Standard Config)
+      // 1. Tesseract
       const { data } = await Tesseract.recognize(image, "eng", {
         logger: (m) => {
           if (m.status === "recognizing text") {
@@ -37,7 +37,7 @@ export default function Home() {
         },
       });
 
-      // 2. Fix for Tesseract v6 Structure
+      // 2. Fix for Tesseract v6
       const textData = data as any;
       let allWords = textData.words || [];
       if (allWords.length === 0 && textData.blocks) {
@@ -49,7 +49,6 @@ export default function Home() {
       }
 
       const fullText = textData.text;
-      setDebugInfo(`OCR Read: ${fullText.substring(0, 30)}...`); // Show first 30 chars
 
       // 3. Send to API
       setStatus("Analyzing Ingredients...");
@@ -59,27 +58,23 @@ export default function Home() {
         body: JSON.stringify({ text: fullText }),
       });
 
-      if (!response.ok) throw new Error("API Failed");
-
       const result = await response.json();
       const { bad_ingredients } = result;
-      setDebugInfo(
-        (prev) => `${prev} | AI Found: ${bad_ingredients?.length || 0}`
-      );
 
-      // 4. Match Words (Fuzzy Logic)
+      // 4. Match Words
       const newOverlays: any[] = [];
       allWords.forEach((word: any) => {
         const isBad = bad_ingredients?.some((bad: string) => {
           const cleanBad = bad.toLowerCase().replace(/[^a-z0-9]/g, "");
           const cleanWord = word.text.toLowerCase().replace(/[^a-z0-9]/g, "");
+          // Very loose matching
           return (
             cleanWord.length > 2 &&
             (cleanBad.includes(cleanWord) || cleanWord.includes(cleanBad))
           );
         });
 
-        if (isBad && word.confidence > 60) {
+        if (isBad) {
           newOverlays.push({
             text: word.text,
             bbox: word.bbox,
@@ -89,15 +84,20 @@ export default function Home() {
       });
 
       setOverlays(newOverlays);
-      setStatus(
-        newOverlays.length > 0
-          ? `Found ${newOverlays.length} items!`
-          : "Clean Label!"
+      setStatus("Done!");
+
+      // === THE DIAGNOSTIC ALERT ===
+      alert(
+        `DIAGNOSTIC REPORT:\n` +
+          `1. OCR Words Found: ${allWords.length}\n` +
+          `2. AI Bad Ingredients: ${JSON.stringify(bad_ingredients)}\n` +
+          `3. Red Boxes Created: ${newOverlays.length}\n\n` +
+          `Sample Text: ${fullText.substring(0, 50)}...`
       );
+      // ============================
     } catch (err: any) {
-      console.error(err);
-      setStatus("Error. Check Debug.");
-      setDebugInfo(`Error: ${err.message}`);
+      alert(`ERROR: ${err.message}`);
+      setStatus("Error.");
     } finally {
       setScanning(false);
     }
