@@ -63,7 +63,12 @@ export default function Home() {
       });
 
       const { bad_ingredients } = await response.json();
-
+      alert(
+        `RAW OCR TEXT:\n${fullText.substring(
+          0,
+          100
+        )}\n\nAI FOUND:\n${JSON.stringify(bad_ingredients)}`
+      );
       // Step C: Match "Bad Words" to Coordinates (Visual Overlay)
       const newOverlays: any[] = [];
 
