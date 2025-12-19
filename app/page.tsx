@@ -132,9 +132,18 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
-      <h1 className="text-2xl font-bold mb-4 text-red-500 tracking-wider">
-        TRUTH LENS
+      <h1 className="text-2xl font-bold mb-2 text-yellow-400 tracking-wider">
+        TRUTH LENS v2.0
       </h1>
+      {/* FORCE VISIBLE DEBUGGER AT TOP */}
+      <div className="w-full bg-yellow-900/80 border border-yellow-400 p-2 mb-4 text-[10px] font-mono text-yellow-200 h-24 overflow-y-auto">
+        <strong>LIVE LOGS (v2):</strong>
+        {logs.length === 0 ? (
+          <div>Waiting for scan...</div>
+        ) : (
+          logs.map((log, i) => <div key={i}>{log}</div>)
+        )}
+      </div>
 
       {/* CAMERA VIEW */}
       <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
