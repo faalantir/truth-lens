@@ -21,6 +21,7 @@ export default function Home() {
     "idle"
   );
   const [foundItems, setFoundItems] = useState<string[]>([]);
+  const [debugMsg, setDebugMsg] = useState("");
 
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
@@ -35,6 +36,7 @@ export default function Home() {
     setOverlays([]);
     setFoundItems([]);
     setResultState("idle");
+    setDebugMsg("");
     setStatus("Reading Text...");
 
     try {
@@ -62,10 +64,13 @@ export default function Home() {
       }
 
       const fullText = textData.text;
+      setDebugMsg(
+        `Read ${fullText.length} chars: "${fullText.substring(0, 20)}..."`
+      );
 
-      // SAFETY CHECK: Did we actually read anything?
+      // SAFETY CHECK
       if (fullText.length < 10) {
-        setStatus("Text too blurry. Try again.");
+        setStatus("Text too blurry/short.");
         setScanning(false);
         return;
       }
@@ -80,33 +85,35 @@ export default function Home() {
 
       const result = await response.json();
       const { bad_ingredients } = result;
+      const villains = bad_ingredients || [];
 
-      // 4. Determine State (Red vs Green)
-      if (bad_ingredients && bad_ingredients.length > 0) {
+      // 4. Determine State
+      if (villains.length > 0) {
         setResultState("danger");
-        setFoundItems(bad_ingredients);
+        setFoundItems(villains);
         setStatus("⚠️ HIDDEN INGREDIENTS");
-      } else {
-        setResultState("safe");
-        setStatus("✅ CLEAN LABEL");
-      }
 
-      // 5. Draw Boxes (Only for bad items)
-      const newOverlays: any[] = [];
-      if (bad_ingredients?.length > 0) {
+        // Draw Red Boxes
+        const newOverlays: any[] = [];
         allWords.forEach((word: any) => {
           const w = word.text.toLowerCase().replace(/[^a-z]/g, "");
-          const isMatch = bad_ingredients.some((bad: string) => {
+          const isMatch = villains.some((bad: string) => {
             const b = bad.toLowerCase().replace(/[^a-z]/g, "");
             return w.length > 2 && (b.includes(w) || w.includes(b));
           });
           if (isMatch) newOverlays.push({ text: word.text, bbox: word.bbox });
         });
+        setOverlays(newOverlays);
+      } else {
+        // GREEN STATE LOGIC
+        setResultState("safe");
+        setStatus("✅ CLEAN LABEL");
+        setDebugMsg("No villains found. Going Green.");
       }
-      setOverlays(newOverlays);
     } catch (err: any) {
       console.error(err);
       setStatus("Error. Try Again.");
+      setDebugMsg(err.message);
     } finally {
       setScanning(false);
     }
@@ -117,16 +124,8 @@ export default function Home() {
     setOverlays([]);
     setFoundItems([]);
     setResultState("idle");
+    setDebugMsg("");
     setStatus("Ready to Scan");
-  };
-
-  // Dynamic Styles based on result
-  const getThemeColor = () => {
-    if (resultState === "danger")
-      return "bg-red-950 border-red-500 text-red-100";
-    if (resultState === "safe")
-      return "bg-green-950 border-green-500 text-green-100";
-    return "bg-black border-gray-800 text-white";
   };
 
   return (
@@ -140,7 +139,11 @@ export default function Home() {
       } text-white`}
     >
       <div className="flex items-center gap-2 mb-6">
-        <ScanEye className="w-8 h-8 opacity-80" />
+        {resultState === "safe" ? (
+          <CheckCircle className="w-8 h-8 text-green-400" />
+        ) : (
+          <ScanEye className="w-8 h-8 opacity-80" />
+        )}
         <h1 className="text-2xl font-bold tracking-widest">TRUTH LENS</h1>
       </div>
 
@@ -203,7 +206,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* RESULT CARD - DANGER */}
+      {/* DANGER CARD */}
       {resultState === "danger" && (
         <div className="w-full max-w-md mt-6 bg-red-900/90 border-l-4 border-red-500 p-4 rounded-r-lg shadow-xl animate-in slide-in-from-bottom-10 fade-in duration-500">
           <div className="flex items-start gap-3">
@@ -227,7 +230,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* RESULT CARD - SAFE */}
+      {/* SAFE CARD (The Goal) */}
       {resultState === "safe" && (
         <div className="w-full max-w-md mt-6 bg-green-900/90 border-l-4 border-green-500 p-4 rounded-r-lg shadow-xl animate-in slide-in-from-bottom-10 fade-in duration-500">
           <div className="flex items-center gap-3">
@@ -237,7 +240,7 @@ export default function Home() {
                 Clean Label Verified
               </h3>
               <p className="text-green-300 text-xs">
-                No hidden sugars or additives detected.
+                No hidden sugars or deceptive additives.
               </p>
             </div>
           </div>
@@ -263,8 +266,9 @@ export default function Home() {
         )}
       </div>
 
-      <p className="mt-8 text-[10px] text-gray-500 font-mono">
-        Truth Lens v2.1 • Smart Analysis
+      {/* TINY DEBUG (Remove for video if you want, but useful now) */}
+      <p className="mt-8 text-[10px] text-gray-500 font-mono text-center">
+        {debugMsg}
       </p>
     </div>
   );

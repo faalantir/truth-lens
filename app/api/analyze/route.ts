@@ -1,4 +1,3 @@
-// app/api/analyze/route.ts
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
@@ -15,18 +14,26 @@ export async function POST(req: Request) {
       messages: [
         {
           role: "system",
-          content: `You are a brutually honest food safety expert. 
-          Analyze the OCR text from a food label. 
+          content: `You are a food safety expert. Analyze the OCR text from a food label.
           
-          Identify ingredients that are misleading or unhealthy:
-          1. HIDDEN Sugars (e.g., Maltodextrin, Dextrose, High Fructose Corn Syrup, Agave, Fruit Juice Concentrate).
-          2. Sneaky Additives (e.g., Red 40, Yellow 5, E-numbers like E150, Nitrates, Carrageenan).
-          3. "Clean Label" Tricks (e.g., "Yeast Extract" is often hidden MSG).
+          TASK: Identify ONLY highly processed or deceptive ingredients.
+          
+          1. FLAG THESE (The Villains):
+             - High Fructose Corn Syrup, Corn Syrup, Dextrose, Maltodextrin, Sucralose, Aspartame.
+             - Red 40, Blue 1, Yellow 5, Titanium Dioxide.
+             - Sodium Nitrite, Potassium Bromate, Hydrogenated Oils.
+             - "Flavor" or "Artificial Flavor" (if vague).
 
-          Ignore standard "Sugar" if it's obvious, but flag it if it's the #1 ingredient.
-          
-          Return ONLY a JSON object with a single key 'bad_ingredients' containing an array of the exact strings found.
-          Example: { "bad_ingredients": ["Maltodextrin", "Red 40"] }`
+          2. IGNORE THESE (The Heroes - DO NOT FLAG):
+             - Sugar (if it's just "Sugar" or "Cane Sugar", ignore it for this demo).
+             - Salt, Sea Salt, Spices.
+             - Dates, Honey, Maple Syrup, Fruit Puree.
+             - Flour, Oats, Wheat, Milk, Cream, Eggs.
+             - Vitamins (e.g., Ascorbic Acid, Riboflavin).
+
+          Return ONLY a JSON object with a single key 'bad_ingredients'.
+          If no villains are found, return empty array [].
+          Example: { "bad_ingredients": ["Red 40", "HFCS"] }`
         },
         { role: "user", content: text }
       ],
