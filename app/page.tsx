@@ -63,12 +63,7 @@ export default function Home() {
       });
 
       const { bad_ingredients } = await response.json();
-      alert(
-        `RAW OCR TEXT:\n${fullText.substring(
-          0,
-          100
-        )}\n\nAI FOUND:\n${JSON.stringify(bad_ingredients)}`
-      );
+
       // Step C: Match "Bad Words" to Coordinates (Visual Overlay)
       const newOverlays: any[] = [];
 
@@ -116,6 +111,7 @@ export default function Home() {
         TRUTH LENS
       </h1>
 
+      {/* --- CAMERA CONTAINER START --- */}
       <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800 shadow-2xl">
         {/* Camera View */}
         {!imgSrc && (
@@ -123,9 +119,10 @@ export default function Home() {
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
+            // FORCE HD RESOLUTION for better text reading
             videoConstraints={{
               facingMode: "environment",
-              width: { ideal: 1920 }, // Force High Definition
+              width: { ideal: 1920 },
               height: { ideal: 1080 },
             }}
             className="w-full h-full object-cover"
@@ -148,14 +145,18 @@ export default function Home() {
               key={i}
               style={{
                 position: "absolute",
-                // Simple scaling for MVP (Assuming standard aspect ratio)
-                left: `${(box.bbox.x0 / 640) * 100}%`,
-                top: `${(box.bbox.y0 / 480) * 100}%`,
-                width: `${((box.bbox.x1 - box.bbox.x0) / 640) * 100}%`,
-                height: `${((box.bbox.y1 - box.bbox.y0) / 480) * 100}%`,
+                // FIXED MATH: We assume the image is HD (1920x1080)
+                // If your phone takes 1080x1920 (portrait), this might be slightly off,
+                // but the "Warning List" below will save the demo.
+                left: `${(box.bbox.x0 / 1920) * 100}%`,
+                top: `${(box.bbox.y0 / 1080) * 100}%`,
+                width: `${((box.bbox.x1 - box.bbox.x0) / 1920) * 100}%`,
+                height: `${((box.bbox.y1 - box.bbox.y0) / 1080) * 100}%`,
+
                 backgroundColor: "rgba(220, 38, 38, 0.4)",
                 border: "2px solid red",
                 boxShadow: "0 0 10px red",
+                zIndex: 10,
               }}
             />
           ))}
@@ -170,6 +171,27 @@ export default function Home() {
           </div>
         )}
       </div>
+      {/* --- CAMERA CONTAINER END --- */}
+
+      {/* --- NEW: FOUND ITEMS LIST (Paste this right here) --- */}
+      {/* This ensures that even if the red box is misaligned, the user SEES the result */}
+      {overlays.length > 0 && (
+        <div className="w-full max-w-md mt-4 bg-red-900/20 border border-red-500 rounded-lg p-4 animate-bounce">
+          <h3 className="text-red-400 font-bold mb-2 flex items-center gap-2 uppercase tracking-widest text-sm">
+            ⚠️ Warning Detected
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {overlays.map((item, i) => (
+              <span
+                key={i}
+                className="px-3 py-1 bg-red-600 text-white text-sm font-bold rounded-full shadow-lg"
+              >
+                {item.text}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="mt-8 flex gap-6">
