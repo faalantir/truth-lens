@@ -11,33 +11,49 @@ export default function Home() {
   const [scanning, setScanning] = useState(false);
   const [overlays, setOverlays] = useState<any[]>([]);
   const [status, setStatus] = useState("Ready to Scan");
-  const [debugInfo, setDebugInfo] = useState(""); // Silent debug for you
+
+  // THE ON-SCREEN LOGGER STATE
+  const [logs, setLogs] = useState<string[]>([]);
+
+  const addLog = (msg: string) => {
+    setLogs((prev) => [
+      ...prev,
+      `${new Date().toLocaleTimeString().split(" ")[0]}: ${msg}`,
+    ]);
+  };
 
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
       setImgSrc(imageSrc);
+      setLogs(["Image Captured."]); // Reset logs on new capture
       processImage(imageSrc);
+    } else {
+      addLog("Error: Camera capture failed.");
     }
   }, [webcamRef]);
 
-  // REPLACE THE processImage FUNCTION WITH THIS DIAGNOSTIC VERSION
   const processImage = async (image: string) => {
     setScanning(true);
     setOverlays([]);
-    setStatus("Reading Text (OCR)...");
+    setStatus("Reading Text...");
 
     try {
+      addLog("Starting Tesseract...");
+
       // 1. Tesseract
       const { data } = await Tesseract.recognize(image, "eng", {
         logger: (m) => {
-          if (m.status === "recognizing text") {
+          if (
+            m.status === "recognizing text" &&
+            (m.progress * 100) % 20 === 0
+          ) {
             setStatus(`Scanning... ${Math.floor(m.progress * 100)}%`);
           }
         },
       });
 
-      // 2. Fix for Tesseract v6
+      // 2. Extract Words
       const textData = data as any;
       let allWords = textData.words || [];
       if (allWords.length === 0 && textData.blocks) {
@@ -48,56 +64,61 @@ export default function Home() {
         );
       }
 
-      const fullText = textData.text;
+      const fullText = textData.text.replace(/\n/g, " ");
+      addLog(`OCR Read: "${fullText.substring(0, 30)}..."`); // Show us what it read!
 
-      // 3. Send to API
-      setStatus("Analyzing Ingredients...");
+      if (fullText.length < 5) {
+        addLog("Error: Text too short/empty.");
+        setScanning(false);
+        return;
+      }
+
+      // 3. API Call
+      setStatus("Analyzing...");
+      addLog("Sending to OpenAI...");
+
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: fullText }),
       });
 
+      if (!response.ok) throw new Error(`API Error ${response.status}`);
+
       const result = await response.json();
       const { bad_ingredients } = result;
 
-      // 4. Match Words
+      addLog(`AI Found: [${bad_ingredients?.join(", ")}]`);
+
+      // 4. Matching Logic (The "Nuclear" Loose Match)
       const newOverlays: any[] = [];
-      allWords.forEach((word: any) => {
-        const isBad = bad_ingredients?.some((bad: string) => {
-          const cleanBad = bad.toLowerCase().replace(/[^a-z0-9]/g, "");
-          const cleanWord = word.text.toLowerCase().replace(/[^a-z0-9]/g, "");
-          // Very loose matching
-          return (
-            cleanWord.length > 2 &&
-            (cleanBad.includes(cleanWord) || cleanWord.includes(cleanBad))
-          );
-        });
 
-        if (isBad) {
-          newOverlays.push({
-            text: word.text,
-            bbox: word.bbox,
-            color: "rgba(255, 0, 0, 0.5)",
+      if (bad_ingredients && bad_ingredients.length > 0) {
+        allWords.forEach((word: any) => {
+          const w = word.text.toLowerCase().replace(/[^a-z]/g, ""); // strip punctuation
+
+          const isMatch = bad_ingredients.some((bad: string) => {
+            const b = bad.toLowerCase().replace(/[^a-z]/g, "");
+            // Match if word is inside bad ingredient OR bad ingredient is inside word
+            // e.g. "syrup" matches "corn syrup"
+            return w.length > 2 && (b.includes(w) || w.includes(b));
           });
-        }
-      });
 
+          if (isMatch) {
+            newOverlays.push({
+              text: word.text,
+              bbox: word.bbox,
+            });
+          }
+        });
+      }
+
+      addLog(`Matches/Boxes: ${newOverlays.length}`);
       setOverlays(newOverlays);
-      setStatus("Done!");
-
-      // === THE DIAGNOSTIC ALERT ===
-      alert(
-        `DIAGNOSTIC REPORT:\n` +
-          `1. OCR Words Found: ${allWords.length}\n` +
-          `2. AI Bad Ingredients: ${JSON.stringify(bad_ingredients)}\n` +
-          `3. Red Boxes Created: ${newOverlays.length}\n\n` +
-          `Sample Text: ${fullText.substring(0, 50)}...`
-      );
-      // ============================
+      setStatus(newOverlays.length > 0 ? "⚠️ Found Items!" : "Clean Label");
     } catch (err: any) {
-      alert(`ERROR: ${err.message}`);
-      setStatus("Error.");
+      addLog(`CRASH: ${err.message}`);
+      console.error(err);
     } finally {
       setScanning(false);
     }
@@ -107,7 +128,6 @@ export default function Home() {
     setImgSrc(null);
     setOverlays([]);
     setStatus("Ready to Scan");
-    setDebugInfo("");
   };
 
   return (
@@ -116,23 +136,17 @@ export default function Home() {
         TRUTH LENS
       </h1>
 
-      {/* CAMERA CONTAINER */}
-      <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800 shadow-2xl">
+      {/* CAMERA VIEW */}
+      <div className="relative w-full max-w-md aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
         {!imgSrc && (
           <Webcam
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            // FORCE HD RESOLUTION (The "Viral" Setting)
-            videoConstraints={{
-              facingMode: "environment",
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-            }}
+            videoConstraints={{ facingMode: "environment" }} // Safe Mode Camera
             className="w-full h-full object-cover"
           />
         )}
-
         {imgSrc && (
           <img
             src={imgSrc}
@@ -141,49 +155,50 @@ export default function Home() {
           />
         )}
 
-        {/* RED BOX OVERLAYS */}
+        {/* RED BOXES */}
         {imgSrc &&
           overlays.map((box, i) => (
             <div
               key={i}
               style={{
                 position: "absolute",
-                // HD Scaling Math (Assuming 1920x1080 source)
-                left: `${(box.bbox.x0 / 1920) * 100}%`,
-                top: `${(box.bbox.y0 / 1080) * 100}%`,
-                width: `${((box.bbox.x1 - box.bbox.x0) / 1920) * 100}%`,
-                height: `${((box.bbox.y1 - box.bbox.y0) / 1080) * 100}%`,
-                backgroundColor: "rgba(220, 38, 38, 0.4)",
+                // Use simplified relative math for safety
+                left: `${
+                  (box.bbox.x0 / (imgSrc.includes("width") ? 1 : 400)) * 100
+                }%`,
+                top: `${
+                  (box.bbox.y0 / (imgSrc.includes("height") ? 1 : 400)) * 100
+                }%`,
+                // Just try to center it roughly if math fails:
                 border: "2px solid red",
-                boxShadow: "0 0 10px red",
-                zIndex: 10,
+                width: "15%",
+                height: "5%", // Force a visible box size if coordinates fail
+                backgroundColor: "rgba(255, 0, 0, 0.4)",
+                zIndex: 20,
               }}
             />
           ))}
 
         {scanning && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="text-center">
-              <ScanEye className="w-12 h-12 text-red-500 animate-pulse mx-auto mb-2" />
-              <p className="font-mono text-green-400">{status}</p>
-            </div>
+            <ScanEye className="w-12 h-12 text-red-500 animate-pulse" />
           </div>
         )}
       </div>
 
-      {/* WARNING LIST (The "Safety Net" for the Demo) */}
+      {/* WARNING LIST (Always Visible Backup) */}
       {overlays.length > 0 && (
-        <div className="w-full max-w-md mt-4 bg-red-900/20 border border-red-500 rounded-lg p-4 animate-bounce">
-          <h3 className="text-red-400 font-bold mb-2 flex items-center gap-2 uppercase tracking-widest text-sm">
-            ⚠️ Warning Detected
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {overlays.map((item, i) => (
+        <div className="w-full max-w-md mt-2 bg-red-900/40 border border-red-500 p-3 rounded animate-bounce">
+          <p className="text-red-300 text-xs font-bold uppercase">
+            ⚠️ Warning Detected:
+          </p>
+          <div className="flex flex-wrap gap-2 mt-1">
+            {overlays.map((o, i) => (
               <span
                 key={i}
-                className="px-3 py-1 bg-red-600 text-white text-sm font-bold rounded-full shadow-lg"
+                className="bg-red-600 text-white text-xs px-2 py-1 rounded"
               >
-                {item.text}
+                {o.text}
               </span>
             ))}
           </div>
@@ -191,27 +206,35 @@ export default function Home() {
       )}
 
       {/* CONTROLS */}
-      <div className="mt-8 flex gap-6">
+      <div className="mt-6 flex gap-6">
         {!imgSrc ? (
           <button
             onClick={capture}
-            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center active:scale-95 transition-transform"
+            className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center"
           >
             <Camera className="w-8 h-8 text-black" />
           </button>
         ) : (
           <button
             onClick={reset}
-            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2 hover:bg-gray-700 transition-colors"
+            className="px-6 py-3 bg-gray-800 rounded-full flex items-center gap-2"
           >
             <RefreshCw className="w-5 h-5" /> Retake
           </button>
         )}
       </div>
 
-      {/* SILENT DEBUG INFO (Visible to you, doesn't ruin video) */}
-      <div className="mt-4 text-[10px] text-gray-600 font-mono text-center max-w-xs break-all">
-        {debugInfo}
+      {/* === THE DEBUG DASHBOARD (Black Box) === */}
+      <div className="w-full max-w-md mt-6 p-2 bg-gray-900 border border-gray-700 text-[10px] font-mono text-green-400 h-32 overflow-y-auto">
+        <p className="border-b border-gray-700 mb-1 text-gray-500">
+          SYSTEM LOGS:
+        </p>
+        {logs.map((log, i) => (
+          <div key={i}>{log}</div>
+        ))}
+        {logs.length === 0 && (
+          <span className="text-gray-600">Waiting for logs...</span>
+        )}
       </div>
     </div>
   );
